@@ -38,7 +38,7 @@ export const APPLICATION_GROUP_RELATIONSHIP_TYPE =
 interface IntegrationInstance {
   id: string;
   name: string;
-  config: object;
+  config?: object;
 }
 
 export function createApplicationEntity(

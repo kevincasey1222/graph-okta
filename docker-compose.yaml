@@ -1,12 +1,51 @@
 version: '3'
-
 services:
-  graph:
+  gremlin-server:
     image: tinkerpop/gremlin-server:3.4
-    user: "1000"
     volumes:
-      - ./node_modules/@jupiterone/jupiter-managed-integration-sdk/gremlin-client/conf:/etc/opt
-    restart: unless-stopped
+      - ./node_modules/@jupiterone/platform-sdk-neptune/conf/gremlin-server:/etc/opt/
+    user: root
     command: /etc/opt/gremlin-server.yaml
-    ports:
-      - "8182:8182"
+  dynamodb:
+    image: amazon/dynamodb-local:1.11.477
+    command: -jar DynamoDBLocal.jar -inMemory -port 4569
+  localstack:
+    image: localstack/localstack:0.10.2
+    environment:
+      - SERVICES=s3:4572
+  # The "start" container is simply used to run a command (remove old
+  # terraform state file) when `docker-compose up` launches it.
+  # We use `tail -f` on a file to keep it running until `docker-compose down`
+  # is called to teardown containers.
+  start:
+    image: alpine:3.10.2
+    entrypoint: sh
+    volumes:
+      - ./tools/terraform:/tmp/tools/terraform:delegated
+    command: -c "rm -f /tmp/tools/terraform/terraform.tfstate && echo 'terraform.tfstate removed' && touch nothing.txt && tail -f -n 0 nothing.txt"
+  terraform:
+    image: hashicorp/terraform:0.13.2
+    environment:
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=some-id
+      - AWS_SECRET_ACCESS_KEY=some-key
+    depends_on:
+      - localstack
+      - dynamodb
+      - start
+    volumes:
+      - ./tools/terraform:/tmp/tools/terraform:delegated
+      - ./deploy/terraform:/tmp/deploy/terraform:delegated
+      - ./node_modules/@jupiterone/jupiter-persister/terraform:/tmp/jupiter-persister/terraform:delegated
+    working_dir: /opt/work
+    entrypoint: sh
+    command: >
+      -c "
+      cp /tmp/deploy/terraform/dynamodb.tf /opt/work/jupiter-integration-aws-dynamodb.tf &&
+      cp /tmp/jupiter-persister/terraform/*.tf /opt/work &&
+      cp -R /tmp/tools/terraform/* /opt/work/ &&
+      ls -al /opt/work &&
+      terraform init &&
+      terraform apply -auto-approve -no-color &&
+      cp -R /opt/work/.terraform /opt/work/terraform.tfstate /tmp/tools/terraform/
+      "
